@@ -15,14 +15,12 @@ import os
 
 # Blurbdust
 from certipy.lib.certificate import load_pfx
-from sccmwtf import SCCMTools, Tools, CryptoTools, policyBody, msgHeaderPolicy, msgHeader, dateFormat1
+from sccmwtf import CryptoTools, dateFormat1
 from cryptography.hazmat.primitives.asymmetric import padding
 import tftpy
 from asn1crypto import cms
 
-# Custom Import library
 import media_variable_file_cryptography as media_crypto
-
 from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
 from cryptography.hazmat.primitives import hashes
 
@@ -31,10 +29,9 @@ from os import walk
 from requests_toolbelt import MultipartEncoder,MultipartDecoder
 from scapy.all import *
 from ipaddress import IPv4Network,IPv4Address
-from rich.console import Console
 from rich import print
 from rich.table import Table
-
+from rich.console import Console
 
 # Scapy global variables
 clientIPAddress = ""
@@ -1551,17 +1548,17 @@ if __name__ == "__main__":
             formatter_class=argparse.RawDescriptionHelpFormatter,
             description="An upgraded version of PXEThief used for extracting sensitive data from SCCM/MECM material and servers",
             epilog='''
-            Automatically scan across a network for PXE bootable devices and download the media variables file:
+            Broadcast for DHCP and use PXE to try to download the PXE Materials:
                 python3 pxethiefup.py -a
                 python3 pxethiefup.py --auto
 
-            Scan from a specific network interface (scapy int) for PXE bootable devices and download the media variables file automatically:
-                python3 pxethiefup.py -a -i 73
-                python3 pxethiefup.py --auto --interface 73
-
-            Request a PXE boot against a specific MECM Distribution Point server:
+            Request a target MECM Distribution Point server for PXE Materials:
                 python3 pxethiefup.py -m -t 10.1.1.2
                 python3 pxethiefup.py --manual -target 10.1.1.2
+
+            Use a specific network interface (scapy int value) when requesting the PXE files from a manual interface:
+                python3 pxethiefup.py -m -t 10.1.1.2 -i 73
+                python3 pxethiefup.py --manual -target 10.1.1.2 --interface 73
 
             Search a folder for SCCM media files (including ISO) and decrypt them:
                 python pxethiefup.py -d -f "..\\folder\\"
@@ -1611,8 +1608,6 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--interface", help="Specify the network interface to use (int)", default=None)
 
     args = parser.parse_args()
-
-
 
     SELECTED_INTERFACE = None
 
@@ -1675,19 +1670,19 @@ if __name__ == "__main__":
         else:
             # TODO!
             # Convert a / to a list of IPs
-            ip_list = ipaddress.ip_network(args.target, strict=False)
-            ip_list = list(ip_list.hosts())
+            #ip_list = ipaddress.ip_network(args.target, strict=False)
+            #ip_list = list(ip_list.hosts())
 
-            for ip in ip_list:
-                # TODO!
-                print_nice(f"Attempting to download media variables file from MECM server located at: {ip}", "INFO")
-                print(f"Configuring Scapy networking for interface: {SELECTED_INTERFACE}", "INFO")
-                configure_scapy_networking(str(ip), SELECTED_INTERFACE)
-                get_pxe_files(str(ip))
+            #for ip in ip_list:
+            #    # TODO!
+            #    print_nice(f"Attempting to download media variables file from MECM server located at: {ip}", "INFO")
+            #    print(f"Configuring Scapy networking for interface: {SELECTED_INTERFACE}", "INFO")
+            #    configure_scapy_networking(str(ip), SELECTED_INTERFACE)
+            #    get_pxe_files(str(ip))
 
-            #print_nice(f"Generating and downloading encrypted media variables file from MECM server located at: {args.target}")
-            #configure_scapy_networking(args.target, SELECTED_INTERFACE)
-            #get_pxe_files(args.target)
+            print_nice(f"Generating and downloading encrypted media variables file from MECM server located at: {args.target}")
+            configure_scapy_networking(args.target, SELECTED_INTERFACE)
+            get_pxe_files(args.target)
 
     elif (args.decrypt):
         # Decrypt media variables file using password
@@ -1716,10 +1711,6 @@ if __name__ == "__main__":
                 sys.exit(0)
 
             variables_path, policy_path = scan_for_files(folder)
-            #if (variables_scan != None):
-            #    variables_path = variables_scan
-            #if (policy_scan != None):
-            #    policy_path = policy_scan
             
             if (variables_path == None):
                 print_nice("No media variables file found in folder", "ERROR")
