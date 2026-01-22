@@ -87,4 +87,4 @@ def read_media_variable_file_header(filename):
         hash_type = "aes256$"
     if media_data[32:36] == "0366":
         hash_type = "3des..$"
-    return hash_type + media_data
+    return '$sccm$' + hash_type + media_data
