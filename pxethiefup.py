@@ -1437,12 +1437,11 @@ def get_pxe_files(ip):
     # If the BCD validated file contains a blank password, use it
     if BLANK_PASSWORDS_FOUND:
         encrypted_key = answer_array[2]
+        write_to_file(WORKING_DIR, "encrypted_key", encrypted_key, "binary")
 
     tftp_client = tftpy.TftpClient(tftp_server_ip, 69)
     tftp_client.download(variables_file, WORKING_DIR + variables_filename)
     tftp_client.download(bcd_file, WORKING_DIR + bcd_filename)
-
-    write_to_file(WORKING_DIR, "encrypted_key", encrypted_key, "binary")
 
     if BLANK_PASSWORDS_FOUND:
         print_nice("Attempting automatic exploitation.", "INFO")
