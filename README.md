@@ -1,6 +1,6 @@
 # PXEThiefUp
 
-PXEThiefUp up is a modification of the original PXEThief by MWR-Cybersec, (with improvements from the fork by blurbdust). This adds a large amount of features which I needed in the field, and fixes common issues I've found during testing, alongside a lot of refactoring.
+PXEThiefUp up is a modification of the original [PXEThief by MWR-Cybersec](https://github.com/MWR-CyberSec/PXEThief), (with improvements from the [fork by blurbdust]((https://github.com/blurbdust/PXEThief))). This adds a large amount of features which I needed in the field, and fixes common issues I've found during testing, alongside a lot of refactoring.
 
 ## Features
 
