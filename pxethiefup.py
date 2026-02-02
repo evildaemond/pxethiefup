@@ -1478,7 +1478,7 @@ def get_pxe_files(ip):
     else:
         # If a defined password is used for the media
         print_nice("User configured password detected for task sequence media.", "INFO")
-        response, decrypted_media_variables, resolved_password = test_default_weak_passwords_on_media(variables_file)
+        response, decrypted_media_variables, resolved_password = test_default_weak_passwords_on_media(WORKING_DIR + variables_filename)
 
     if decrypted_media_variables is not None:
         #print_nice("Successfully decrypted media variables file using default/weak password!", "SUCCESS")
