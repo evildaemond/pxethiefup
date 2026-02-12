@@ -505,12 +505,11 @@ def validate_ip_or_resolve_hostname(input):
     return ip_address
 
 def generate_hashcat_output(input):
-    hash = media_crypto.read_media_variable_file_header(input)
+    hash, hashcat_mode = media_crypto.read_media_variable_file_header(input)
 
     print_nice(f"[yellow]Hash[white]: {hash}")
-    print_nice(f"[yellow]Hashcat mode[white]: 19850 (requires https://github.com/The-Viper-One/hashcat-6.2.6-SCCM)")
-    # Note for future self: the current hashcat mode only supports AES-128...
-    print_nice(f"[yellow]Command[white]: \nhashcat -m 19850 -a 0 '{hash}' '..\\rockyou(1).txt'")
+    print_nice(f"[yellow]Hashcat mode[white]: {hashcat_mode} (requires https://github.com/blurbdust/configmgr-cryptderivekey-hashcat-module/)")
+    print_nice(f"[yellow]Command[white]: \nhashcat -m {hashcat_mode} -a 0 '{hash}' 'rockyou.txt'")
 
 def test_default_weak_passwords_on_media(path):
     blankPassword = ("{BAC6E688-DE21-4ABE-B7FB-C9F54E6DB664}").encode("utf-16-le")
