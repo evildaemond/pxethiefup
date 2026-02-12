@@ -82,12 +82,10 @@ def _3des_decrypt_raw(data, key, iv = (b"\x00" * 8)):
     decrypted = _3des.decrypt(data)
     return decrypted
 
-
-
 hash_types = [
-    {"name": 'CALG_AES_128' , "value": '0e66', "key_length": 16, "block_size": 16,  "hash_prefix": "aes128$"},
-    {"name": 'CALG_AES_256' , "value": '1066', "key_length": 32, "block_size": 16,  "hash_prefix": "aes256$"},
-    {"name": 'CALG_3DES'    , "value": '0366', "key_length": 21, "block_size": 8,   "hash_prefix": "3des..$"},
+    {"name": 'CALG_AES_128' , "value": '0e66', "key_length": 16, "block_size": 16,  "hash_prefix": "aes128$", "hashcat_mode": "19850"},
+    {"name": 'CALG_AES_256' , "value": '1066', "key_length": 32, "block_size": 16,  "hash_prefix": "aes256$", "hashcat_mode": "19851"},
+    {"name": 'CALG_3DES'    , "value": '0366', "key_length": 21, "block_size": 8,   "hash_prefix": "3des..$", "hashcat_mode": "Unknown"},
 ]
 
 def read_media_variable_file_header(filename):
@@ -108,10 +106,10 @@ def read_media_variable_file_header(filename):
 
     if (not encryption_information):
         # We have not identified the encryption type
-        return None
+        return None, None
 
     hash = '$sccm$' + encryption_information["hash_prefix"] + media_data
-    return hash
+    return hash, encryption_information["hashcat_mode"]
 
 def decrypt_file(algo, data, key, iv=None, decode=True):
     decrypt = None
