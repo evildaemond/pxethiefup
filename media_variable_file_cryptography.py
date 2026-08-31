@@ -82,10 +82,12 @@ def _3des_decrypt_raw(data, key, iv = (b"\x00" * 8)):
     decrypted = _3des.decrypt(data)
     return decrypted
 
+
+
 hash_types = [
-    {"name": 'CALG_AES_128' , "value": '0e66', "key_length": 16, "block_size": 16,  "hash_prefix": "aes128$", "hashcat_mode": "19850"},
-    {"name": 'CALG_AES_256' , "value": '1066', "key_length": 32, "block_size": 16,  "hash_prefix": "aes256$", "hashcat_mode": "19851"},
-    {"name": 'CALG_3DES'    , "value": '0366', "key_length": 21, "block_size": 8,   "hash_prefix": "3des..$", "hashcat_mode": "Unknown"},
+    {"name": 'CALG_AES_128' , "value": '0e66', "key_length": 16, "block_size": 16,  "hash_prefix": "aes128$"},
+    {"name": 'CALG_AES_256' , "value": '1066', "key_length": 32, "block_size": 16,  "hash_prefix": "aes256$"},
+    {"name": 'CALG_3DES'    , "value": '0366', "key_length": 24, "block_size": 8,   "hash_prefix": "3des..$"},
 ]
 
 def read_media_variable_file_header(filename):
@@ -106,18 +108,22 @@ def read_media_variable_file_header(filename):
 
     if (not encryption_information):
         # We have not identified the encryption type
-        return None, None
+        return None
 
     hash = '$sccm$' + encryption_information["hash_prefix"] + media_data
-    return hash, encryption_information["hashcat_mode"]
+    return hash
 
 def decrypt_file(algo, data, key, iv=None, decode=True):
     decrypt = None
     if algo == 'CALG_AES_128' or algo == 'CALG_AES_256':
-        iv = b"\x00" * 16
+        # Allow callers (e.g. the DHCP-wrapped key unwrap) to supply a non-zero IV;
+        # default to a zero IV to preserve the original behaviour.
+        if iv is None:
+            iv = b"\x00" * 16
         decrypt = AES.new(key, AES.MODE_CBC, iv)
     elif algo == 'CALG_3DES':
-        iv = b"\x00" * 8
+        if iv is None:
+            iv = b"\x00" * 8
         decrypt = DES3.new(key, DES3.MODE_CBC, iv)
 
     decrypted_bytes = decrypt.decrypt(data)
@@ -214,7 +220,7 @@ class media_decryption():
 
         self.derived_key = b0_sha1 + b1_sha1
 
-    def decrypt_media_file(self, password, decode=True):
+    def decrypt_media_file(self, password, decode=True, strip=True):
         # Identify the encryption type used for the media file 
         self._identify_encryption_type()
 
@@ -242,6 +248,19 @@ class media_decryption():
 
         if not decrypted_file:
             return False, None
+
+        # When decode is disabled (e.g. decrypting the PXE DHCP option 243 key
+        # envelope) the result is raw binary, so hand the bytes back untouched.
+        # String operations such as rfind/isprintable only apply to decoded text
+        # and would otherwise raise (bytes.rfind with a str) or corrupt the key.
+        if not decode:
+            return True, decrypted_file
+
+        # When strip is disabled (e.g. deobfuscating NAA/TS credential strings)
+        # the caller performs its own null trimming, so return the raw decoded
+        # text without filtering printable characters (as the original code did).
+        if not strip:
+            return True, decrypted_file
 
         decrypted_file =  decrypted_file[:decrypted_file.rfind('\x00')]
         wf_decrypted_ts = "".join(c for c in decrypted_file if c.isprintable())

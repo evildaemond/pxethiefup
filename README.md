@@ -9,6 +9,7 @@ PXEThiefUp up is a modification of the original [PXEThief by MWR-Cybersec](https
     - `variables.dat` and `policy.xml` support
     - `.iso` file support
     - `boot.var` support
+    - `.var` and `.bcd` (PXE network media) support
 - Folder Scanning
 - Loot folder organisation for completed files
 - Basic weak password testing
@@ -38,7 +39,7 @@ pip install -r requirements.txt
 ## Usage
 
 ```text
-usage: pxethiefup [-h] [-a] [-m] [-t [TARGET]] [-u [URL]] [-d] [-f [FOLDER]] [-vf [VARIABLES]] [-pf [POLICY]] [-p [PASSWORD]] [-c] [-v] [-l] [-i INTERFACE]
+usage: pxethiefup [-h] [-a] [-m] [-t [TARGET]] [-u [URL]] [-d] [-f [FOLDER]] [-vf [VARIABLES]] [-pf [POLICY]] [-bf [BCD]] [-p [PASSWORD]] [-c] [-v] [-l] [-i INTERFACE]
 
 An upgraded version of PXEThief used for extracting sensitive data from SCCM/MECM material and servers
 
@@ -57,6 +58,9 @@ options:
                         Variable file to decrypt
   -pf [POLICY], --policy [POLICY]
                         Policy file to decrypt
+  -bf [BCD], --bcd [BCD]
+                        BCD boot configuration file to preserve alongside the
+                        variables file
   -p [PASSWORD], --password [PASSWORD]
                         Password to decrypt the media variables file (for hex input, use 0x prefix)
   -c, --crack           Print the hash corresponding to a specified media variables file for cracking in hashcat
@@ -112,6 +116,13 @@ python3 pxethiefup.py --decrypt --variables variables.xml --password password123
 ```bash
 python3 pxethiefup.py -d -vf variables.xml -pf policies.xml -p password123
 python3 pxethiefup.py --decrypt --variables variables.xml --policy policies.xml --password password123
+```
+
+**Decrypt PXE network media using a .var and .bcd file pair (folder scan or explicit files):**
+```bash
+python3 pxethiefup.py -d -f 'tets/'
+python3 pxethiefup.py --decrypt --folder 'tets/'
+python3 pxethiefup.py -d -vf 0000000018.var -bf BUILD00005-01456-00008.bcd
 ```
 
 **Decrypt a boot.var file with the known password**
