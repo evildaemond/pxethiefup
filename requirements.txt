@@ -7,4 +7,4 @@ rich
 pycdlib
 certipy-ad
 requests_ntlm
-tftpy
+tftpy==0.8.5
