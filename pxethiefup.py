@@ -1416,12 +1416,45 @@ def download_file_tftp_scapy(server_ip, remote_filename, local_path, server_port
         print_nice(f"TFTP (scapy) GET tftp://{server_ip}:{server_port}/{remote_filename} -> {local_path} (blksize={blksize})", "INFO")
 
     # Choose a client TID (source port). Avoid 68 as that is DHCP.
-    client_tid = 60069
+    preferred_tid = 60069
 
     # Bind a socket so the host does not reply to the first DATA with ICMP
     # port-unreachable (this can abort the transfer on some stacks).
-    dummy_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    dummy_sock.bind((clientIPAddress, client_tid))
+    #
+    # On Windows, binding to a hardcoded port can fail with WinError 10013
+    # (WSAEACCES) when the port falls inside an excluded UDP port range
+    # reserved by Hyper-V / WinNAT (see
+    # `netsh int ipv4 show excludedportrange protocol=udp`). To stay reliable,
+    # try the preferred port first, then fall back to an OS-assigned ephemeral
+    # port (bind to port 0), which Windows guarantees is usable. Binding to the
+    # specific interface IP may also fail if that address is not currently
+    # assigned, so 0.0.0.0 is tried as a final fallback. The socket's actual
+    # bound port is always used as the client TID so the packet source ports
+    # and sniff filters below match what the OS socket holds.
+    dummy_sock = None
+    bind_errors = []
+    for bind_ip, bind_port in (
+        (clientIPAddress, preferred_tid),
+        (clientIPAddress, 0),
+        ("0.0.0.0", 0),
+    ):
+        candidate_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            candidate_sock.bind((bind_ip, bind_port))
+        except (PermissionError, OSError) as bind_err:
+            bind_errors.append(f"{bind_ip}:{bind_port} -> {bind_err}")
+            candidate_sock.close()
+            continue
+        dummy_sock = candidate_sock
+        break
+
+    if dummy_sock is None:
+        print_nice(f"Unable to bind a local TFTP socket (tried {'; '.join(bind_errors)})", "ERROR")
+        return False
+
+    client_tid = dummy_sock.getsockname()[1]
+    if (VERBOSE):
+        print_nice(f"Client TID (source port): {client_tid}", "INFO")
     dummy_sock.setblocking(False)
 
     try:
